@@ -118,8 +118,8 @@ def dqn_learing(
             obs = torch.from_numpy(obs).type(dtype).unsqueeze(0) / 255.0
             # with torch.no_grad() variable is only used in inference mode, i.e. don’t save the history
             with torch.no_grad():
-                action = model(Variable(obs, volatile=True)).data.max(1)[1]
-                action = action[1].cpu()
+                action = model(obs)
+                action = action.data.max(1)[1]
                 return action
         else:
             # select random action
@@ -137,11 +137,11 @@ def dqn_learing(
     
     def calc_mse_error(training_net, target_net, state_batch, a_batch, r_batch, next_state_batch, done_mask):
         device = torch.device('cuda:0')
-        states_v = torch.tensor(state_batch).to(device)
-        next_states_v = torch.tensor(next_state_batch).to(device)
-        actions_v = torch.tensor(a_batch).to(device)
-        rewards_v = torch.tensor(r_batch).to(device)
-        done_mask = torch.ByteTensor(done_mask).to(device)
+        states_v = torch.tensor(state_batch).type(torch.cuda.FloatTensor).to(device)
+        next_states_v = torch.tensor(next_state_batch).type(torch.cuda.FloatTensor).to(device)
+        actions_v = torch.tensor(a_batch).type(torch.int64).to(device)
+        rewards_v = torch.tensor(r_batch).type(torch.cuda.FloatTensor).to(device)
+        done_mask = torch.ByteTensor(done_mask).type(torch.bool).to(device)
 
         Q_values = training_net(states_v).gather(1, actions_v.unsqueeze(-1)).squeeze(-1)
         next_state_values = target_net(next_states_v).max(1)[0]
@@ -264,7 +264,7 @@ def dqn_learing(
             #      variable num_param_updates useful for this (it was initialized to 0)
             #####
             state_batch, a_batch, r_batch, next_state_batch, done_mask = replay_buffer.sample(batch_size)
-            loss_t = calc_mse_error(state_batch, a_batch, r_batch, next_state_batch, done_mask)
+            loss_t = calc_mse_error(training_net, target_net, state_batch, a_batch, r_batch, next_state_batch, done_mask)
             optimizer.zero_grad()
             loss_t.backward()
             optimizer.step()
