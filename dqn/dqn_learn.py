@@ -17,6 +17,8 @@ import torch.autograd as autograd
 from utils.replay_buffer import ReplayBuffer
 from utils.gym import get_wrapper_by_name
 
+from dqn_model import DQN, DQN_RAM
+
 USE_CUDA = torch.cuda.is_available()
 dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
 
@@ -100,7 +102,6 @@ def dqn_learing(
     ###############
     # BUILD MODEL #
     ###############
-
     if len(env.observation_space.shape) == 1:
         # This means we are running on low-dimensional observations (e.g. RAM)
         input_arg = env.observation_space.shape[0]
@@ -117,20 +118,58 @@ def dqn_learing(
             obs = torch.from_numpy(obs).type(dtype).unsqueeze(0) / 255.0
             # with torch.no_grad() variable is only used in inference mode, i.e. don’t save the history
             with torch.no_grad():
-                return model(Variable(obs, volatile=True)).data.max(1)[1].cpu()
+                action = model(Variable(obs, volatile=True)).data.max(1)[1]
+                action = action[1].cpu()
+                return action
         else:
+            # select random action
             return torch.IntTensor([[random.randrange(num_actions)]])
+
+    def play_step(obs_t, t, target_net):
+        obs_idx = replay_buffer.store_frame(obs_t) 
+        s_t = replay_buffer.encode_recent_observation(obs_t)
+        a_t = select_epilson_greedy_action(target_net, s_t, t)
+        next_obs, r_t, is_done, _ = env.step(a_t)
+        replay_buffer.store_effect(obs_idx, a_t, r_t, is_done)
+        if is_done:
+            next_obs = env.reset()
+        return next_obs 
+    
+    def calc_mse_error(training_net, target_net, state_batch, a_batch, r_batch, next_state_batch, done_mask):
+        device = torch.device('cuda:0')
+        states_v = torch.tensor(state_batch).to(device)
+        next_states_v = torch.tensor(next_state_batch).to(device)
+        actions_v = torch.tensor(a_batch).to(device)
+        rewards_v = torch.tensor(r_batch).to(device)
+        done_mask = torch.ByteTensor(done_mask).to(device)
+
+        Q_values = training_net(states_v).gather(1, actions_v.unsqueeze(-1)).squeeze(-1)
+        next_state_values = target_net(next_states_v).max(1)[0]
+        next_state_values[done_mask] = 0.0
+        next_state_values = next_state_values.detach()
+        expected_Q_values = next_state_values * gamma + rewards_v
+        loss_t = nn.MSELoss()(Q_values, expected_Q_values)
+        loss_t = torch.clamp(loss_t, min=-1, max=1)
+        return loss_t
 
     # Initialize target q function and q function, i.e. build the model.
     ######
-
-    # YOUR CODE HERE
-
+    device = torch.device('cuda:0')
+    if len(env.observation_space.shape) == 1:
+        # This means we are running on low-dimensional observations (e.g. RAM)
+        training_net = DQN_RAM(in_features=env.observation_space.shape[0],
+                num_actions=env.action_space.n).to(device)
+        target_net = DQN_RAM(in_features=env.observation_space.shape[0],
+                num_actions=env.action_space.n).to(device)
+    else:
+        training_net = q_func(in_channels=env.observation_space.shape[0],
+                num_actions=env.action_space.n).to(device)
+        target_net = q_func(in_channels=env.observation_space.shape[0],
+                num_actions=env.action_space.n).to(device)
     ######
 
-
     # Construct Q network optimizer function
-    optimizer = optimizer_spec.constructor(Q.parameters(), **optimizer_spec.kwargs)
+    optimizer = optimizer_spec.constructor(training_net.parameters(), **optimizer_spec.kwargs)
 
     # Construct the replay buffer
     replay_buffer = ReplayBuffer(replay_buffer_size, frame_history_len)
@@ -141,8 +180,9 @@ def dqn_learing(
     num_param_updates = 0
     mean_episode_reward = -float('nan')
     best_mean_episode_reward = -float('inf')
-    last_obs = env.reset()
+    obs_t = env.reset()
     LOG_EVERY_N_STEPS = 10000
+    total_reward = 0
 
     for t in count():
         ### 1. Check stopping criterion
@@ -150,42 +190,48 @@ def dqn_learing(
             break
 
         ### 2. Step the env and store the transition
-        # At this point, "last_obs" contains the latest observation that was
-        # recorded from the simulator. Here, your code needs to store this
-        # observation and its outcome (reward, next observation, etc.) into
+        # At this point, "obs_t" contains the latest observation that was
+        # recorded from the simulator. 
+        # Here, your code needs to 
+        # 1. store this observation and its outcome (reward, next observation, etc.) into
         # the replay buffer while stepping the simulator forward one step.
-        # At the end of this block of code, the simulator should have been
-        # advanced one step, and the replay buffer should contain one more
-        # transition.
-        # Specifically, last_obs must point to the new latest observation.
-        # Useful functions you'll need to call:
-        # obs, reward, done, info = env.step(action)
+
         # this steps the environment forward one step
         # obs = env.reset()
         # this resets the environment if you reached an episode boundary.
         # Don't forget to call env.reset() to get a new observation if done
         # is true!!
-        # Note that you cannot use "last_obs" directly as input
+
+        # At the end of this block of code, the simulator should have been
+        # advanced one step, and the replay buffer should contain one more
+        # transition.
+
+        # Specifically, obs_t must point to the new latest observation.
+        # Useful functions you'll need to call:
+
+        # Note that you cannot use "obs_t" directly as input
         # into your network, since it needs to be processed to include context
         # from previous frames. You should check out the replay buffer
         # implementation in dqn_utils.py to see what functionality the replay
-        # buffer exposes. The replay buffer has a function called
+        # buffer exposes. 
+        # 
+        # The replay buffer has a function called
         # encode_recent_observation that will take the latest observation
         # that you pushed into the buffer and compute the corresponding
         # input that should be given to a Q network by appending some
         # previous frames.
+
         # Don't forget to include epsilon greedy exploration!
         # And remember that the first time you enter this loop, the model
         # may not yet have been initialized (but of course, the first step
         # might as well be random, since you haven't trained your net...)
         #####
-
-        # YOUR CODE HERE
-
+        next_obs = play_step(obs_t, t, target_net)
+        obs_t = next_obs
         #####
 
         # at this point, the environment should have been advanced one step (and
-        # reset if done was true), and last_obs should point to the new latest
+        # reset if done was true), and obs_t should point to the new latest
         # observation
 
         ### 3. Perform experience replay and train the network.
@@ -217,9 +263,13 @@ def dqn_learing(
             #      you should update every target_update_freq steps, and you may find the
             #      variable num_param_updates useful for this (it was initialized to 0)
             #####
-
-            # YOUR CODE HERE
-
+            state_batch, a_batch, r_batch, next_state_batch, done_mask = replay_buffer.sample(batch_size)
+            loss_t = calc_mse_error(state_batch, a_batch, r_batch, next_state_batch, done_mask)
+            optimizer.zero_grad()
+            loss_t.backward()
+            optimizer.step()
+            if t % target_update_freq == 0:
+                target_net.load_state_dict(training_net.state_dict())
             #####
 
         ### 4. Log progress and keep track of statistics
