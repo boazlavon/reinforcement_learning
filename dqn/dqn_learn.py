@@ -127,7 +127,7 @@ def dqn_learing(
 
     def play_step(obs_t, t, target_net):
         obs_idx = replay_buffer.store_frame(obs_t) 
-        s_t = replay_buffer.encode_recent_observation(obs_t)
+        s_t = replay_buffer.encode_recent_observation()
         a_t = select_epilson_greedy_action(target_net, s_t, t)
         next_obs, r_t, is_done, _ = env.step(a_t)
         replay_buffer.store_effect(obs_idx, a_t, r_t, is_done)
@@ -162,9 +162,9 @@ def dqn_learing(
         target_net = DQN_RAM(in_features=env.observation_space.shape[0],
                 num_actions=env.action_space.n).to(device)
     else:
-        training_net = q_func(in_channels=env.observation_space.shape[0],
+        training_net = q_func(in_channels=frame_history_len,
                 num_actions=env.action_space.n).to(device)
-        target_net = q_func(in_channels=env.observation_space.shape[0],
+        target_net = q_func(in_channels=frame_history_len,
                 num_actions=env.action_space.n).to(device)
     ######
 
