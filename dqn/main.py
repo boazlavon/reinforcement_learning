@@ -1,5 +1,7 @@
 import gym
 import torch.optim as optim
+import os
+import time
 
 from dqn_model import DQN
 from dqn_learn import OptimizerSpec, dqn_learing
@@ -17,7 +19,7 @@ LEARNING_RATE = 0.00025
 ALPHA = 0.95
 EPS = 0.01
 
-def main(env, num_timesteps):
+def main(env, num_timesteps, output_dir):
 
     def stopping_criterion(env):
         # notice that here t is the number of steps of the wrapped env,
@@ -44,6 +46,7 @@ def main(env, num_timesteps):
         learning_freq=LEARNING_FREQ,
         frame_history_len=FRAME_HISTORY_LEN,
         target_update_freq=TARGER_UPDATE_FREQ,
+        output_dir=output_dir,
     )
 
 if __name__ == '__main__':
@@ -55,6 +58,9 @@ if __name__ == '__main__':
 
     # Run training
     seed = 0 # Use a seed of zero (you may want to randomize the seed!)
-    env = get_env(task, seed)
+    timestamp = str(time.time()).split('0')[0]
+    output_dir = os.path.join('results', timestamp)
+    os.system(f'mkdir -p {output_dir}')
+    env = get_env(task, seed, output_dir)
 
-    main(env, task.max_timesteps)
+    main(env, task.max_timesteps, output_dir)

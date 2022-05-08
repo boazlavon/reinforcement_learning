@@ -1,6 +1,7 @@
 """
-    This file is copied/apdated from https://github.com/berkeleydeeprlcourse/homework/tree/master/hw3
+This file is copied/apdated from https://github.com/berkeleydeeprlcourse/homework/tree/master/hw3
 """
+from re import U
 import sys
 import pickle
 import numpy as np
@@ -8,6 +9,7 @@ from collections import namedtuple
 from itertools import count
 import random
 import gym.spaces
+import os
 
 import torch
 import torch.nn as nn
@@ -52,7 +54,8 @@ def dqn_learing(
     learning_starts=50000,
     learning_freq=4,
     frame_history_len=4,
-    target_update_freq=10000
+    target_update_freq=10000,
+    output_dir=None
     ):
 
     """Run Deep Q-learning algorithm.
@@ -111,14 +114,14 @@ def dqn_learing(
     num_actions = env.action_space.n
 
     # Construct an epilson greedy policy with given exploration schedule
-    def select_epilson_greedy_action(model, obs, t):
+    def select_epilson_greedy_action(model, s_t, t):
         sample = random.random()
         eps_threshold = exploration.value(t)
         if sample > eps_threshold:
-            obs = torch.from_numpy(obs).type(dtype).unsqueeze(0) / 255.0
+            s_t = torch.from_numpy(s_t).type(dtype).unsqueeze(0) / 255.0
             # with torch.no_grad() variable is only used in inference mode, i.e. don’t save the history
             with torch.no_grad():
-                action = model(obs)
+                action = model(Variable(s_t, volatile=True))
                 action = action.data.max(1)[1]
                 return action
         else:
@@ -133,28 +136,35 @@ def dqn_learing(
         replay_buffer.store_effect(obs_idx, a_t, r_t, is_done)
         if is_done:
             next_obs = env.reset()
-        return next_obs 
+        return next_obs
     
     def calc_mse_error(training_net, target_net, state_batch, a_batch, r_batch, next_state_batch, done_mask):
-        device = torch.device('cuda:0')
-        states_v = torch.tensor(state_batch).type(torch.cuda.FloatTensor).to(device)
-        next_states_v = torch.tensor(next_state_batch).type(torch.cuda.FloatTensor).to(device)
+        if USE_CUDA:
+            device = torch.device('cuda')
+        else:
+            device = torch.device('cpu')
+        states_v = torch.tensor(state_batch).type(dtype).to(device)
+        next_states_v = torch.tensor(next_state_batch).type(dtype).to(device)
         actions_v = torch.tensor(a_batch).type(torch.int64).to(device)
-        rewards_v = torch.tensor(r_batch).type(torch.cuda.FloatTensor).to(device)
+        rewards_v = torch.tensor(r_batch).type(dtype).to(device)
         done_mask = torch.ByteTensor(done_mask).type(torch.bool).to(device)
 
-        Q_values = training_net(states_v).gather(1, actions_v.unsqueeze(-1)).squeeze(-1)
-        next_state_values = target_net(next_states_v).max(1)[0]
+        Q_values = training_net(states_v)
+        Q_values = Q_values.gather(1, actions_v.unsqueeze(-1)).squeeze(-1)
+        next_state_values = target_net(next_states_v)
+        next_state_values = next_state_values.max(1)[0]
         next_state_values[done_mask] = 0.0
-        next_state_values = next_state_values.detach()
+        next_state_values.detach()
         expected_Q_values = next_state_values * gamma + rewards_v
         loss_t = nn.MSELoss()(Q_values, expected_Q_values)
-        loss_t = torch.clamp(loss_t, min=-1, max=1)
         return loss_t
 
     # Initialize target q function and q function, i.e. build the model.
     ######
-    device = torch.device('cuda:0')
+    if USE_CUDA:
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
     if len(env.observation_space.shape) == 1:
         # This means we are running on low-dimensional observations (e.g. RAM)
         training_net = DQN_RAM(in_features=env.observation_space.shape[0],
@@ -166,6 +176,7 @@ def dqn_learing(
                 num_actions=env.action_space.n).to(device)
         target_net = q_func(in_channels=frame_history_len,
                 num_actions=env.action_space.n).to(device)
+    target_net.load_state_dict(training_net.state_dict())
     ######
 
     # Construct Q network optimizer function
@@ -182,7 +193,6 @@ def dqn_learing(
     best_mean_episode_reward = -float('inf')
     obs_t = env.reset()
     LOG_EVERY_N_STEPS = 10000
-    total_reward = 0
 
     for t in count():
         ### 1. Check stopping criterion
@@ -288,9 +298,14 @@ def dqn_learing(
             print("best mean reward %f" % best_mean_episode_reward)
             print("episodes %d" % len(episode_rewards))
             print("exploration %f" % exploration.value(t))
+            print("loss %f" % loss_t)
             sys.stdout.flush()
 
             # Dump statistics to pickle
-            with open('statistics.pkl', 'wb') as f:
+            with open(os.path.join(output_dir, 'statistics.pkl'), 'wb') as f:
                 pickle.dump(Statistic, f)
                 print("Saved to %s" % 'statistics.pkl')
+
+            with open(os.path.join(output_dir, 'model.pkl'), 'wb') as f:
+                pickle.dump(target_net, f)
+                print("Saved to %s" % 'model.pkl')
