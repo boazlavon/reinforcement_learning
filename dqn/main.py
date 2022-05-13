@@ -3,6 +3,7 @@ import torch.optim as optim
 import os
 import time
 import argparse
+import json
 
 from dqn_model import DQN
 from dqn_learn import OptimizerSpec, dqn_learning
@@ -79,6 +80,9 @@ if __name__ == '__main__':
 
     # Run training
     args = get_args()
+    args_json = json.dumps(args)
+    with open(os.path.join(output_dir, 'args.json')) as f:
+        f.write(args_json)
 
     task = benchmark.tasks[args['task']]
     del args['task']
