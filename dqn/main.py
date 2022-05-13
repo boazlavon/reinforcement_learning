@@ -78,20 +78,20 @@ if __name__ == '__main__':
     benchmark = gym.benchmark_spec('Atari40M')
     seed = 0 
 
-    # Run training
-    args = get_args()
-    args_json = json.dumps(args)
-    with open(os.path.join(output_dir, 'args.json')) as f:
-        f.write(args_json)
-
-    task = benchmark.tasks[args['task']]
-    del args['task']
-
     # output directory
     timestamp = str(time.time()).split('.')[0]
     output_dir = os.path.join('results', timestamp)
     os.system(f"mkdir -p {output_dir}")
     print(f"output directory: {output_dir}")
+
+    # Run training
+    args = get_args()
+    args_json = json.dumps(args)
+    with open(os.path.join(output_dir, 'args.json'), 'w') as f:
+        f.write(args_json)
+
+    task = benchmark.tasks[args['task']]
+    del args['task']
 
     env = get_env(task, seed, output_dir)
     main(env, task.max_timesteps, output_dir, **args)
