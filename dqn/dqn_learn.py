@@ -332,11 +332,12 @@ def dqn_learning(
         statistic["exploration"].append(exploration.value(t))
 
         if t % LOG_EVERY_N_STEPS == 0 and t > learning_starts:
-            print(f"mean reward ({LAST_EPISODES_COUNT} episodes) {mean_episode_reward}")
-            print(f"best mean reward {best_mean_episode_reward}")
-            print(f"mean loss {mean_loss}")
-            print(f"exploration {exploration.value(t)}")
+            print(f"timestamp: {t}")
             print(f"episodes {len(episode_rewards)}")
+            print(f"mean reward ({LAST_EPISODES_COUNT} episodes) {mean_episode_reward:.3f}")
+            print(f"best mean reward {best_mean_episode_reward:.3f}")
+            print(f"mean loss {mean_loss:.3E}")
+            print(f"exploration {exploration.value(t):.3E}")
             sys.stdout.flush()
 
             # Dump statistics to pickle
