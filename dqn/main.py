@@ -2,12 +2,15 @@ import gym
 import torch.optim as optim
 import os
 import time
+import argparse
 
 from dqn_model import DQN
-from dqn_learn import OptimizerSpec, dqn_learing
+from dqn_learn import OptimizerSpec, dqn_learning
 from utils.gym import get_env, get_wrapper_by_name
 from utils.schedule import LinearSchedule
+import sys
 
+PONG_TASK=3
 BATCH_SIZE = 32
 GAMMA = 0.99
 REPLAY_BUFFER_SIZE = 1000000
@@ -19,7 +22,9 @@ LEARNING_RATE = 0.00025
 ALPHA = 0.95
 EPS = 0.01
 
-def main(env, num_timesteps, output_dir):
+def main(env, num_timesteps, output_dir, 
+         replay_buffer_size, batch_size, gamma, learning_starts, 
+         learning_freq, frame_history_len, target_update_freq, learning_rate, alpha, eps):
 
     def stopping_criterion(env):
         # notice that here t is the number of steps of the wrapped env,
@@ -28,39 +33,61 @@ def main(env, num_timesteps, output_dir):
 
     optimizer_spec = OptimizerSpec(
         constructor=optim.RMSprop,
-        kwargs=dict(lr=LEARNING_RATE, alpha=ALPHA, eps=EPS),
+        kwargs=dict(lr=learning_rate, alpha=alpha, eps=eps),
     )
 
     exploration_schedule = LinearSchedule(1000000, 0.1)
 
-    dqn_learing(
+    dqn_learning(
         env=env,
         q_func=DQN,
         optimizer_spec=optimizer_spec,
         exploration=exploration_schedule,
         stopping_criterion=stopping_criterion,
-        replay_buffer_size=REPLAY_BUFFER_SIZE,
-        batch_size=BATCH_SIZE,
-        gamma=GAMMA,
-        learning_starts=LEARNING_STARTS,
-        learning_freq=LEARNING_FREQ,
-        frame_history_len=FRAME_HISTORY_LEN,
-        target_update_freq=TARGER_UPDATE_FREQ,
+        replay_buffer_size=replay_buffer_size,
+        batch_size=batch_size,
+        gamma=gamma,
+        learning_starts=learning_starts,
+        learning_freq=learning_freq,
+        frame_history_len=frame_history_len,
+        target_update_freq=target_update_freq,
         output_dir=output_dir,
+        init_output_dir=True
     )
+
+def get_args():
+    parser = argparse.ArgumentParser(description='DQN params')
+    parser.add_argument('--batch_size', type=int, default=BATCH_SIZE)
+    parser.add_argument('--replay_buffer_size', type=int, default=REPLAY_BUFFER_SIZE)
+    parser.add_argument('--learning_starts', type=int, default=LEARNING_STARTS)
+    parser.add_argument('--learning_freq', type=int, default=LEARNING_FREQ)
+    parser.add_argument('--frame_history_len', type=int, default=FRAME_HISTORY_LEN)
+    parser.add_argument('--target_update_freq', type=int, default=TARGER_UPDATE_FREQ)
+    parser.add_argument('--gamma', type=float, default=GAMMA)
+    parser.add_argument('--learning_rate', type=float, default=LEARNING_RATE)
+    parser.add_argument('--alpha', type=float, default=ALPHA)
+    parser.add_argument('--eps', type=float, default=EPS)
+    parser.add_argument('--task', type=int, default=PONG_TASK)
+    args = parser.parse_args()
+    return vars(args)
+
 
 if __name__ == '__main__':
     # Get Atari games.
     benchmark = gym.benchmark_spec('Atari40M')
-
-    # Change the index to select a different game.
-    task = benchmark.tasks[3]
+    seed = 0 
 
     # Run training
-    seed = 0 # Use a seed of zero (you may want to randomize the seed!)
-    timestamp = str(time.time()).split('0')[0]
-    output_dir = os.path.join('results', timestamp)
-    os.system(f'mkdir -p {output_dir}')
-    env = get_env(task, seed, output_dir)
+    args = get_args()
 
-    main(env, task.max_timesteps, output_dir)
+    task = benchmark.tasks[args['task']]
+    del args['task']
+
+    # output directory
+    timestamp = str(time.time()).split('.')[0]
+    output_dir = os.path.join('results', timestamp)
+    os.system(f"mkdir -p {output_dir}")
+    print(f"output directory: {output_dir}")
+
+    env = get_env(task, seed, output_dir)
+    main(env, task.max_timesteps, output_dir, **args)

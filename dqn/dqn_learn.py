@@ -21,6 +21,7 @@ from utils.gym import get_wrapper_by_name
 
 from dqn_model import DQN, DQN_RAM
 
+LAST_EPISODES_COUNT = 100
 USE_CUDA = torch.cuda.is_available()
 dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
 
@@ -37,12 +38,7 @@ class Variable(autograd.Variable):
 """
 OptimizerSpec = namedtuple("OptimizerSpec", ["constructor", "kwargs"])
 
-Statistic = {
-    "mean_episode_rewards": [],
-    "best_mean_episode_rewards": []
-}
-
-def dqn_learing(
+def dqn_learning(
     env,
     q_func,
     optimizer_spec,
@@ -55,7 +51,8 @@ def dqn_learing(
     learning_freq=4,
     frame_history_len=4,
     target_update_freq=10000,
-    output_dir=None
+    output_dir=None,
+    init_output_dir=True
     ):
 
     """Run Deep Q-learning algorithm.
@@ -121,7 +118,7 @@ def dqn_learing(
             s_t = torch.from_numpy(s_t).type(dtype).unsqueeze(0) / 255.0
             # with torch.no_grad() variable is only used in inference mode, i.e. don’t save the history
             with torch.no_grad():
-                action = model(Variable(s_t, volatile=True))
+                action = model(Variable(s_t))
                 action = action.data.max(1)[1]
                 return action
         else:
@@ -138,33 +135,52 @@ def dqn_learing(
             next_obs = env.reset()
         return next_obs
     
-    def calc_mse_error(training_net, target_net, state_batch, a_batch, r_batch, next_state_batch, done_mask):
-        if USE_CUDA:
-            device = torch.device('cuda')
-        else:
-            device = torch.device('cpu')
-        states_v = torch.tensor(state_batch).type(dtype).to(device)
-        next_states_v = torch.tensor(next_state_batch).type(dtype).to(device)
-        actions_v = torch.tensor(a_batch).type(torch.int64).to(device)
-        rewards_v = torch.tensor(r_batch).type(dtype).to(device)
-        done_mask = torch.ByteTensor(done_mask).type(torch.bool).to(device)
+    def calc_loss(training_net, target_net, replay_buffer, batch_size):
+        obs_batch, act_batch, rew_batch, next_obs_batch, done_mask = replay_buffer.sample(batch_size)
+        # Convert numpy nd_array to torch variables for calculation
+        obs_batch = Variable(torch.from_numpy(obs_batch).type(dtype) / 255.0)
+        act_batch = Variable(torch.from_numpy(act_batch).long())
+        rew_batch = Variable(torch.from_numpy(rew_batch))
+        next_obs_batch = Variable(torch.from_numpy(next_obs_batch).type(dtype) / 255.0)
+        not_done_mask = Variable(torch.from_numpy(1 - done_mask)).type(dtype)
 
-        Q_values = training_net(states_v)
-        Q_values = Q_values.gather(1, actions_v.unsqueeze(-1)).squeeze(-1)
-        next_state_values = target_net(next_states_v)
-        next_state_values = next_state_values.max(1)[0]
-        next_state_values[done_mask] = 0.0
-        next_state_values.detach()
-        expected_Q_values = next_state_values * gamma + rewards_v
-        loss_t = nn.MSELoss()(Q_values, expected_Q_values)
-        return loss_t
+        if USE_CUDA:
+            act_batch = act_batch.cuda()
+            rew_batch = rew_batch.cuda()
+
+        # Compute current Q value, q_func takes only state and output value for every state-action pair
+        # We choose Q based on action taken.
+        current_Q_values = training_net(obs_batch).gather(1, act_batch.unsqueeze(1))
+        # Compute next Q value based on which action gives max Q values
+        # Detach variable from the current graph since we don't want gradients for next Q to propagated
+        next_max_q = target_net(next_obs_batch).detach().max(1)[0]
+        next_Q_values = not_done_mask * next_max_q
+        # Compute the target of the current Q values
+        target_Q_values = rew_batch + (gamma * next_Q_values)
+        target_Q_values = target_Q_values.unsqueeze(1)
+        # Compute Bellman error
+        bellman_error = target_Q_values - current_Q_values
+        # clip the bellman error between [-1 , 1]
+        clipped_bellman_error = bellman_error.clamp(-1, 1)
+        # Note: clipped_bellman_delta * -1 will be right gradient
+        d_error = clipped_bellman_error * -1.0
+        return current_Q_values, d_error
 
     # Initialize target q function and q function, i.e. build the model.
     ######
+    statistics_output_path = os.path.join(output_dir, 'statistics.pkl')
+    model_output_path = os.path.join(output_dir, 'model.pkl')
     if USE_CUDA:
         device = torch.device('cuda')
     else:
         device = torch.device('cpu')
+
+    statistic = {
+        "mean_episode_rewards": [],
+        "best_mean_episode_rewards": [],
+        "mean_loss": [],
+        "exploration": [],
+    }
     if len(env.observation_space.shape) == 1:
         # This means we are running on low-dimensional observations (e.g. RAM)
         training_net = DQN_RAM(in_features=env.observation_space.shape[0],
@@ -174,6 +190,17 @@ def dqn_learing(
     else:
         training_net = q_func(in_channels=frame_history_len,
                 num_actions=env.action_space.n).to(device)
+        target_net = q_func(in_channels=frame_history_len,
+                num_actions=env.action_space.n).to(device)
+
+    if not init_output_dir:
+        with open(statistics_output_path, 'rb') as f:
+            print(f"Load statistics from {statistics_output_path}")
+            statistic = pickle.load(f)
+
+        with open(os.path.join(output_dir, 'model.pkl'), 'rb') as f:
+            print(f"Load training net from {model_output_path}")
+            training_net = pickle.load(f)
         target_net = q_func(in_channels=frame_history_len,
                 num_actions=env.action_space.n).to(device)
     target_net.load_state_dict(training_net.state_dict())
@@ -191,8 +218,10 @@ def dqn_learing(
     num_param_updates = 0
     mean_episode_reward = -float('nan')
     best_mean_episode_reward = -float('inf')
+    mean_loss = float('inf')
     obs_t = env.reset()
     LOG_EVERY_N_STEPS = 10000
+    d_error = None
 
     for t in count():
         ### 1. Check stopping criterion
@@ -273,39 +302,48 @@ def dqn_learing(
             #      you should update every target_update_freq steps, and you may find the
             #      variable num_param_updates useful for this (it was initialized to 0)
             #####
-            state_batch, a_batch, r_batch, next_state_batch, done_mask = replay_buffer.sample(batch_size)
-            loss_t = calc_mse_error(training_net, target_net, state_batch, a_batch, r_batch, next_state_batch, done_mask)
+            current_Q_values, d_error = calc_loss(training_net, target_net, replay_buffer, batch_size)
+
+            # Clear previous gradients before backward pass
+            # run backward pass
+            # Perfom the update
             optimizer.zero_grad()
-            loss_t.backward()
+            current_Q_values.backward(d_error.data)
             optimizer.step()
-            if t % target_update_freq == 0:
+            num_param_updates += 1
+
+            # Periodically update the target network by Q network to target Q network
+            if num_param_updates % target_update_freq == 0:
                 target_net.load_state_dict(training_net.state_dict())
             #####
 
         ### 4. Log progress and keep track of statistics
         episode_rewards = get_wrapper_by_name(env, "Monitor").get_episode_rewards()
         if len(episode_rewards) > 0:
-            mean_episode_reward = np.mean(episode_rewards[-100:])
-        if len(episode_rewards) > 100:
+            mean_episode_reward = np.mean(episode_rewards[-1 * LAST_EPISODES_COUNT:])
+            if (d_error is not None):
+                mean_loss = d_error.squeeze().mean()
+        if len(episode_rewards) > LAST_EPISODES_COUNT:
             best_mean_episode_reward = max(best_mean_episode_reward, mean_episode_reward)
 
-        Statistic["mean_episode_rewards"].append(mean_episode_reward)
-        Statistic["best_mean_episode_rewards"].append(best_mean_episode_reward)
+        statistic["mean_episode_rewards"].append(mean_episode_reward)
+        statistic["best_mean_episode_rewards"].append(best_mean_episode_reward)
+        statistic["mean_loss"].append(mean_loss)
+        statistic["exploration"].append(exploration.value(t))
 
         if t % LOG_EVERY_N_STEPS == 0 and t > learning_starts:
-            print("Timestep %d" % (t,))
-            print("mean reward (100 episodes) %f" % mean_episode_reward)
-            print("best mean reward %f" % best_mean_episode_reward)
-            print("episodes %d" % len(episode_rewards))
-            print("exploration %f" % exploration.value(t))
-            print("loss %f" % loss_t)
+            print(f"mean reward ({LAST_EPISODES_COUNT} episodes) {mean_episode_reward}")
+            print(f"best mean reward {best_mean_episode_reward}")
+            print(f"mean loss {mean_loss}")
+            print(f"exploration {exploration.value(t)}")
+            print(f"episodes {len(episode_rewards)}")
             sys.stdout.flush()
 
             # Dump statistics to pickle
-            with open(os.path.join(output_dir, 'statistics.pkl'), 'wb') as f:
-                pickle.dump(Statistic, f)
-                print("Saved to %s" % 'statistics.pkl')
+            with open(statistics_output_path, 'wb') as f:
+                pickle.dump(statistic, f)
+                print(f"Saved statistic to {statistics_output_path}")
 
-            with open(os.path.join(output_dir, 'model.pkl'), 'wb') as f:
+            with open(model_output_path, 'wb') as f:
                 pickle.dump(target_net, f)
-                print("Saved to %s" % 'model.pkl')
+                print(f"Saved model to {model_output_path}")
