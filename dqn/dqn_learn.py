@@ -193,14 +193,19 @@ def dqn_learning(
         target_net = q_func(in_channels=frame_history_len,
                 num_actions=env.action_space.n).to(device)
 
-    if not init_output_dir:
+    try:
         with open(statistics_output_path, 'rb') as f:
-            print(f"Load statistics from {statistics_output_path}")
             statistic = pickle.load(f)
-
+        print(f"Load statistics from {statistics_output_path}")
+    except:
+        print(f"Load statistics from scratch")
+    
+    try:
         with open(os.path.join(output_dir, 'model.pkl'), 'rb') as f:
-            print(f"Load training net from {model_output_path}")
             training_net = pickle.load(f)
+        print(f"Load training net from {model_output_path}")
+    except:
+        print(f"Load training net from scratch")
         target_net = q_func(in_channels=frame_history_len,
                 num_actions=env.action_space.n).to(device)
     target_net.load_state_dict(training_net.state_dict())
@@ -347,63 +352,3 @@ def dqn_learning(
                 pickle.dump(target_net, f)
                 print(f"Saved model to {model_output_path}")
             print()
-
-
-def dqn_eval(
-    env,
-    q_func,
-    exploration,
-    stopping_criterion=None,
-    replay_buffer_size=1000000,
-    frame_history_len=4,
-    output_dir=None,
-    ):
-    assert type(env.observation_space) == gym.spaces.Box
-    assert type(env.action_space)      == gym.spaces.Discrete
-
-    num_actions = env.action_space.n
-    replay_buffer = ReplayBuffer(replay_buffer_size, frame_history_len)
-    # Construct an epilson greedy policy with given exploration schedule
-    def select_action(model, s_t, t):
-        s_t = torch.from_numpy(s_t).type(dtype).unsqueeze(0) / 255.0
-        # with torch.no_grad() variable is only used in inference mode, i.e. don’t save the history
-        with torch.no_grad():
-            action = model(Variable(s_t))
-            action = action.data.max(1)[1]
-            return action
-
-    def play_step(obs_t, t, target_net):
-        obs_idx = replay_buffer.store_frame(obs_t) 
-        s_t = replay_buffer.encode_recent_observation()
-        a_t = select_action(target_net, s_t, t)
-        next_obs, r_t, is_done, _ = env.step(a_t)
-        replay_buffer.store_effect(obs_idx, a_t, r_t, is_done)
-        if is_done:
-            next_obs = env.reset()
-        return next_obs
-    
-    # Initialize target q function and q function, i.e. build the model.
-    ######
-    model_output_path = os.path.join(output_dir, 'model.pkl')
-    if USE_CUDA:
-        device = torch.device('cuda')
-    else:
-        device = torch.device('cpu')
-
-    if len(env.observation_space.shape) == 1:
-        # This means we are running on low-dimensional observations (e.g. RAM)
-        target_net = DQN_RAM(in_features=env.observation_space.shape[0],
-                num_actions=env.action_space.n).to(device)
-    else:
-        target_net = q_func(in_channels=frame_history_len,
-                num_actions=env.action_space.n).to(device)
-
-    with open(os.path.join(output_dir, 'model.pkl'), 'rb') as f:
-        print(f"Load training net from {model_output_path}")
-        target_net = pickle.load(f)
-    obs_t = env.reset()
-    for t in count():
-        if stopping_criterion is not None and stopping_criterion(env):
-            import ipdb; ipdb.set_trace()
-            break
-        obs_t = play_step(obs_t, t, target_net)
