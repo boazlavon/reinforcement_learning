@@ -8,6 +8,18 @@ from utils.atari_wrapper import wrap_deepmind, wrap_deepmind_ram
 import os
 import time
 
+def get_eval_env(task, seed, output_dir):
+    env_id = task.env_id
+    env = gym.make(env_id)
+    set_global_seeds(seed)
+    env.seed(seed)
+    timestamp = str(time.time()).split('.')[0]
+    gym_dir = os.path.join(output_dir, f'eval_gym_results_{seed}')
+    print(f"eval_dir: {gym_dir}")
+    env = wrappers.Monitor(env, gym_dir, force=False, mode='evaluation')
+    env = wrap_deepmind(env)
+    return env
+
 def get_env(task, seed, output_dir, force=True):
     env_id = task.env_id
 
