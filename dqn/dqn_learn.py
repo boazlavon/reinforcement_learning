@@ -228,7 +228,7 @@ def dqn_learning(
     LOG_EVERY_N_STEPS = 10000
     d_error = None
 
-    for t in count():
+    for t in count(len(statistic)):
         ### 1. Check stopping criterion
         if stopping_criterion is not None and stopping_criterion(env):
             break
@@ -320,6 +320,7 @@ def dqn_learning(
             # Periodically update the target network by Q network to target Q network if num_param_updates % target_update_freq == 0: target_net.load_state_dict(training_net.state_dict())
             if num_param_updates % target_update_freq == 0:
                 target_net.load_state_dict(training_net.state_dict())
+                print(f"update target net")
             # Periodically update the target network by Q network to target Q network if num_param_updates % target_update_freq == 0: target_net.load_state
             #####
 

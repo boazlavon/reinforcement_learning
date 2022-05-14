@@ -28,8 +28,8 @@ def get_env(task, seed, output_dir, force=True):
     set_global_seeds(seed)
     env.seed(seed)
     timestamp = str(time.time()).split('.')[0]
-    expt_dir = f'{output_dir}/gym-results_{timestamp}' 
-    env = wrappers.Monitor(env, expt_dir, force=force)
+    expt_dir = f'{output_dir}/gym-results' 
+    env = wrappers.Monitor(env, expt_dir, force=False, resume=True, mode='training')
     env = wrap_deepmind(env)
 
     return env
