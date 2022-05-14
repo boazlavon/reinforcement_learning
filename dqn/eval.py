@@ -9,7 +9,7 @@ from itertools import count
 import random
 
 from dqn_model import DQN
-from dqn_learn import OptimizerSpec, dqn_eval
+from dqn_eval import OptimizerSpec, dqn_eval
 from utils.gym import get_eval_env, get_wrapper_by_name
 from utils.schedule import LinearSchedule
 import sys

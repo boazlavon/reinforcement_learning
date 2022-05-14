@@ -1,4 +1,5 @@
 import gym
+import hashlib
 import torch.optim as optim
 import os
 import time
@@ -58,6 +59,7 @@ def main(env, num_timesteps, output_dir,
 
 def get_args():
     parser = argparse.ArgumentParser(description='DQN params')
+    parser.add_argument('--output_dir', type=str, default='')
     parser.add_argument('--batch_size', type=int, default=BATCH_SIZE)
     parser.add_argument('--replay_buffer_size', type=int, default=REPLAY_BUFFER_SIZE)
     parser.add_argument('--learning_starts', type=int, default=LEARNING_STARTS)
@@ -69,6 +71,7 @@ def get_args():
     parser.add_argument('--alpha', type=float, default=ALPHA)
     parser.add_argument('--eps', type=float, default=EPS)
     parser.add_argument('--task', type=int, default=PONG_TASK)
+    parser.add_argument('--seed', type=int, default=0)
     args = parser.parse_args()
     return vars(args)
 
@@ -76,16 +79,19 @@ def get_args():
 if __name__ == '__main__':
     # Get Atari games.
     benchmark = gym.benchmark_spec('Atari40M')
-    seed = 0 
-
-    # output directory
-    timestamp = str(time.time()).split('.')[0]
-    output_dir = os.path.join('results', timestamp)
-    os.system(f"mkdir -p {output_dir}")
-    print(f"output directory: {output_dir}")
 
     # Run training
     args = get_args()
+    if args['output_dir']:
+        output_dir = args['output_dir']
+    else:
+        output_json = json.dumps(args).encode('utf-8')
+        output_md5 = hashlib.md5(output_json).hexdigest()
+        output_dir = os.path.join('results', output_md5)
+        os.system(f"mkdir -p {output_dir}")
+    del args['output_dir']
+
+    print(f"output directory: {output_dir}")
     args_json = json.dumps(args)
     with open(os.path.join(output_dir, 'args.json'), 'w') as f:
         f.write(args_json)
@@ -93,5 +99,7 @@ if __name__ == '__main__':
     task = benchmark.tasks[args['task']]
     del args['task']
 
-    env = get_env(task, seed, output_dir)
+    env = get_env(task, args['seed'], output_dir)
+    del args['seed']
+
     main(env, task.max_timesteps, output_dir, **args)
