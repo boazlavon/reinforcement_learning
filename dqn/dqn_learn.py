@@ -168,7 +168,8 @@ def dqn_learning(
 
     # Initialize target q function and q function, i.e. build the model.
     ######
-    statistics_output_path = os.path.join(output_dir, 'statistics.pkl')
+    statistics_output_path = os.path.join(output_dir, 'stats')
+    os.system(f'mkdir -p {statistics_output_path}')
     model_output_path = os.path.join(output_dir, 'model.pkl')
     if USE_CUDA:
         device = torch.device('cuda')
@@ -319,9 +320,8 @@ def dqn_learning(
 
             # Periodically update the target network by Q network to target Q network if num_param_updates % target_update_freq == 0: target_net.load_state_dict(training_net.state_dict())
             if num_param_updates % target_update_freq == 0:
-                target_net.load_state_dict(training_net.state_dict())
                 print(f"update target net")
-            # Periodically update the target network by Q network to target Q network if num_param_updates % target_update_freq == 0: target_net.load_state
+                target_net.load_state_dict(training_net.state_dict())
             #####
 
         ### 4. Log progress and keep track of statistics
@@ -348,9 +348,11 @@ def dqn_learning(
             sys.stdout.flush()
 
             # Dump statistics to pickle
-            with open(statistics_output_path, 'wb') as f:
-                pickle.dump(statistic, f)
-                print(f"Saved statistic to {statistics_output_path}")
+            for prop, prop_value in statistic.items():
+                prop_path = os.path.join(statistics_output_path, f'{prop}.pkl')
+                with open(prop_path, 'wb') as f:
+                    pickle.dump(prop_value, f)
+                    print(f"Saved prop to {prop_path}")
 
             with open(model_output_path, 'wb') as f:
                 pickle.dump(target_net, f)
